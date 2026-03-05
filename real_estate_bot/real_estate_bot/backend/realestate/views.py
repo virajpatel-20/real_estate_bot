@@ -1,3 +1,5 @@
+from django.shortcuts import render
+
 import json
 import os
 import re
@@ -7,7 +9,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-# ---- 1. Load Excel once at startup ----
+# ---- 1. Load Excel once ----
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 EXCEL_PATH = os.path.join(BASE_DIR, 'data', 'sample_data.xlsx')
@@ -22,23 +24,18 @@ except Exception as e:
 AREA_COL   = "final location"
 YEAR_COL   = "year"
 PRICE_COL  = "flat - weighted average rate"
-DEMAND_COL = "total carpet area supplied (sqft)"   # set to None to disable demand
+DEMAND_COL = "total carpet area supplied (sqft)"   # use None if you don't want demand
 
 print("Excel columns:", list(df.columns))
+print("AREA_COL  =", AREA_COL)
+print("YEAR_COL  =", YEAR_COL)
+print("PRICE_COL =", PRICE_COL)
+print("DEMAND_COL =", DEMAND_COL)
 
 
 def get_area_from_query(query: str):
     """
-    Extract the area name from a user query by matching against the known list
-    of areas in the dataset.  Two passes are used:
-
-    Pass 1 - try every known area name as a substring of the query (case-insensitive).
-             This correctly handles multi-word area names such as 'Wakad - Hinjewadi'.
-    Pass 2 - try each individual token from the query against the area list.
-             This handles queries like 'Analyze Baner' where the area is one word.
-
-    A plain last-word fallback is intentionally avoided because it caused false
-    matches (e.g. 'What about Wakad please' -> 'please').
+    Very simple extraction: check which area name appears inside the query.
     """
     if AREA_COL not in df.columns:
         return None
@@ -46,28 +43,17 @@ def get_area_from_query(query: str):
     areas = df[AREA_COL].dropna().astype(str).unique()
     q = query.lower()
 
-    # Pass 1: full area string contained in query
+    # 1) If the FULL area string appears in the query (rare but keep it)
     for area in areas:
-        if area.lower() in q:
+        if str(area).lower() in q:
             return str(area)
 
-    # Pass 2: any query token matches an area name
+    # 2) Fallback: last word (e.g. 'Analyze Wakad' -> 'Wakad')
     tokens = re.findall(r'[A-Za-z]+', query)
-    for token in tokens:
-        for area in areas:
-            if token.lower() == area.lower():
-                return str(area)
+    if tokens:
+        return tokens[-1]
 
     return None
-
-
-def _safe(value):
-    """Convert numpy scalar types to plain Python types for JSON serialisation."""
-    if pd.isna(value):
-        return None
-    if hasattr(value, 'item'):          # numpy int/float
-        return value.item()
-    return value
 
 
 @csrf_exempt
@@ -80,7 +66,7 @@ def analyze_area(request):
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
 
     query = body.get('query', '') or ''
-    manual_area = body.get('area')  # optional override from frontend
+    manual_area = body.get('area')  # optional field from frontend
 
     # --- choose area ---
     area = manual_area or get_area_from_query(query)
@@ -88,7 +74,11 @@ def analyze_area(request):
         return JsonResponse({'error': 'Could not detect area from query'}, status=400)
 
     # --- basic column checks ---
-    missing = [col for col in [AREA_COL, YEAR_COL, PRICE_COL] if col not in df.columns]
+    missing = []
+    for col in [AREA_COL, YEAR_COL, PRICE_COL]:
+        if col not in df.columns:
+            missing.append(col)
+
     if DEMAND_COL is not None and DEMAND_COL not in df.columns:
         missing.append(DEMAND_COL)
 
@@ -99,6 +89,7 @@ def analyze_area(request):
         )
 
     # --- filter rows for this area ---
+    # use 'contains' so 'Wakad' matches 'Wakad – Hinjewadi', etc.
     area_mask = df[AREA_COL].astype(str).str.contains(area, case=False, na=False)
     area_df = df[area_mask].copy()
 
@@ -108,7 +99,7 @@ def analyze_area(request):
     # --- sort by year ---
     area_df = area_df.sort_values(by=YEAR_COL)
 
-    # --- numeric conversions ---
+    # --- numeric conversions (safer) ---
     price_series = pd.to_numeric(area_df[PRICE_COL], errors='coerce')
     avg_price = float(price_series.mean(skipna=True))
     min_price = float(price_series.min(skipna=True))
@@ -121,8 +112,8 @@ def analyze_area(request):
             avg_demand = float(demand_series.mean(skipna=True))
 
     years = list(area_df[YEAR_COL])
-    first_year = _safe(years[0])
-    last_year = _safe(years[-1])
+    first_year = years[0]
+    last_year = years[-1]
 
     # --- summary text ---
     summary_parts = [
@@ -137,26 +128,22 @@ def analyze_area(request):
 
     summary = " ".join(summary_parts)
 
-    # --- chart data: all values serialisation-safe ---
-    chart_data = [
-        {
-            "year":   _safe(row[YEAR_COL]),
-            "price":  _safe(row[PRICE_COL]),
-            "demand": _safe(row[DEMAND_COL]) if DEMAND_COL is not None else None,
-        }
-        for _, row in area_df.iterrows()
-    ]
+    # --- chart data: {year, price, demand} ---
+    chart_data = []
+    for _, row in area_df.iterrows():
+        chart_data.append({
+            "year": row[YEAR_COL],
+            "price": row[PRICE_COL],
+            "demand": row[DEMAND_COL] if DEMAND_COL is not None else None,
+        })
 
-    # --- table data: full rows, all values safe ---
-    table_data = [
-        {k: _safe(v) for k, v in record.items()}
-        for record in area_df.to_dict(orient='records')
-    ]
+    # --- table data: full rows ---
+    table_data = area_df.to_dict(orient='records')
 
     response = {
-        "area":      area,
-        "query":     query,
-        "summary":   summary,
+        "area": area,
+        "query": query,
+        "summary": summary,
         "chartData": chart_data,
         "tableData": table_data,
     }

@@ -10,7 +10,6 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
-import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -21,17 +20,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-# Set the SECRET_KEY environment variable in production. Falls back to a
-# development-only default so the project works out-of-the-box locally.
-SECRET_KEY = os.environ.get(
-    'SECRET_KEY',
-    'django-insecure-local-dev-only-change-this-in-production'
-)
+SECRET_KEY = 'django-insecure-qo05#ksu*@2*vq$5&y1#sii5st4^h#a+(up^nc+g0-d1n#p5zm'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG', 'True') == 'True'
+DEBUG = True
 
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = []
 
 
 # Application definition
@@ -119,11 +113,7 @@ USE_I18N = True
 
 USE_TZ = True
 
-# In development, allow all origins. In production set CORS_ALLOWED_ORIGINS instead.
-if DEBUG:
-    CORS_ALLOW_ALL_ORIGINS = True
-else:
-    CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', '').split(',')
+CORS_ALLOW_ALL_ORIGINS = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
